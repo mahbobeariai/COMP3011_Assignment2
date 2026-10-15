@@ -29,6 +29,7 @@ public class CommandLineController {
     private boolean helpRequested;
     private boolean audioRequested;
     private boolean maximiseRequested;
+    private boolean frameNumbersRequested;
     private Integer displayId;
     private File videoFile;
     private String errorMessage;
@@ -67,6 +68,9 @@ public class CommandLineController {
     public boolean isMaximiseRequested() {
         return maximiseRequested;
     }
+    public boolean isFrameNumbersRequested() {
+        return frameNumbersRequested;
+    }
 
     public boolean shouldLaunchApplication() {
         return errorMessage == null && videoFile != null;
@@ -81,6 +85,8 @@ public class CommandLineController {
                 audioRequested = true;
             } else if ("-x".equals(arg) || "--maximise".equals(arg)) {
                 maximiseRequested = true;
+            } else if ("-n".equals(arg)) {
+                frameNumbersRequested = true;
             } else if ("-1".equals(arg) || "--monitor-1".equals(arg)) {
                 setDisplayId(1);
             } else if ("-2".equals(arg) || "--monitor-2".equals(arg)) {
@@ -121,6 +127,7 @@ public class CommandLineController {
         System.out.println("Options:");
         System.out.println("  -h, --help         Show this help message");
         System.out.println("  -a, --audio        Play audio");
+        System.out.println("  -n                 Show frame numbers");
         System.out.println("  -x, --maximise     Open the player maximised");
         System.out.println("  -1, --monitor-1    Open the player on display 1");
         System.out.println("  -2, --monitor-2    Open the player on display 2");
