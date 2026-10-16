@@ -45,7 +45,7 @@ public class VideoPlayerApp extends Application {
 
         controller = new VideoPlayerController(
                 commandLineController.isAudioRequested(),
-                commandLineController.isFrameNumbersRequested(),
+                commandLineController.getRequestedEffects(),
                 this::setVideoSize);
 
         Scene scene = new Scene(controller.getView().getRoot());
