@@ -28,6 +28,7 @@ import javafx.application.Platform;
 import javafx.scene.image.Image;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 /**
  * The model part of the video player model-view-controller architecture.
@@ -45,6 +46,7 @@ public class VideoPlayerModel {
 	        Math.max(1, Runtime.getRuntime().availableProcessors() - 2);
 
 	private ExecutorService frameProcessingExecutor;
+	private final Queue<Future<PreparedFrame>> pendingFrames = new ArrayDeque<>();
     private static final long NO_SEEK_REQUEST = -1; // Sentinel value used when no seek position is active.
     private static final long FIVE_SECONDS_US = 5_000_000L;
     private static final long AUDIO_LEAD_NS = 30_000_000L;
@@ -296,6 +298,10 @@ public class VideoPlayerModel {
     }
 
     private void resetPlaybackClock(long logicalTimestampUs) {
+    	for (Future<PreparedFrame> future : pendingFrames) {
+    	    future.cancel(true);
+    	}
+    	pendingFrames.clear();
         pendingAudio.clear();
         preparedFrame = null;
         currentTimestampUs = logicalTimestampUs;
@@ -517,6 +523,11 @@ public class VideoPlayerModel {
     	    frameProcessingExecutor.shutdownNow();
     	    frameProcessingExecutor = null;
     	}
+    	for (Future<PreparedFrame> future : pendingFrames) {
+    	    future.cancel(true);
+    	}
+    	pendingFrames.clear();
+    	
         playbackTimer.stop();
         playbackOpen = false;
         preparedFrame = null;
@@ -587,6 +598,12 @@ public class VideoPlayerModel {
     private void processFrame(Frame frame, InfoFrame info) throws Exception {
         for (FrameProcessor processor : frameProcessors) {
             processor.process(frame, info);
+        }
+    }
+    
+    private void submitFrameProcessingTask(Runnable task) {
+        if (frameProcessingExecutor != null) {
+            frameProcessingExecutor.submit(task);
         }
     }
 
