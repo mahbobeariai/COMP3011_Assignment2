@@ -36,9 +36,9 @@ public class FrameBleeder extends FrameProcessor {
 
     private int maskWidth;
     private int maskHeight;
-    private double[] brightMask;
-    private double[] horizontalBlurMask;
-    private double[] blurredMask;
+    private final ThreadLocal<double[]> brightMask = new ThreadLocal<>();
+    private final ThreadLocal<double[]> horizontalBlurMask = new ThreadLocal<>();
+    private final ThreadLocal<double[]> blurredMask = new ThreadLocal<>();
     private int[] xMaskLeft;
     private double[] xMaskBlend;
     private int[] yMaskTop;
@@ -54,9 +54,9 @@ public class FrameBleeder extends FrameProcessor {
 
         maskWidth = (videoInfo.imageWidth() + MASK_BLOCK_SIZE - 1) / MASK_BLOCK_SIZE;
         maskHeight = (videoInfo.imageHeight() + MASK_BLOCK_SIZE - 1) / MASK_BLOCK_SIZE;
-        brightMask = new double[maskWidth * maskHeight];
-        horizontalBlurMask = new double[brightMask.length];
-        blurredMask = new double[brightMask.length];
+        brightMask.remove();
+        horizontalBlurMask.remove();
+        blurredMask.remove();
         buildSamplingLookups();
     }
 
@@ -78,6 +78,14 @@ public class FrameBleeder extends FrameProcessor {
             throw new Exception("FrameBleeder requires at least three image channels");
         }
 
+        int maskSize = maskWidth * maskHeight;
+
+        if (brightMask.get() == null) {
+            brightMask.set(new double[maskSize]);
+            horizontalBlurMask.set(new double[maskSize]);
+            blurredMask.set(new double[maskSize]);
+        }
+        
         buildBrightMask(pixels);
         blurBrightMask();
         applyBleed(pixels);
@@ -118,6 +126,7 @@ public class FrameBleeder extends FrameProcessor {
     }
 
     private void buildBrightMask(ByteBuffer pixels) {
+    	double[] brightMask = this.brightMask.get();
         int width = videoInfo.imageWidth();
         int height = videoInfo.imageHeight();
         int channels = videoInfo.imageChannels();
@@ -160,6 +169,10 @@ public class FrameBleeder extends FrameProcessor {
     }
 
     private void blurBrightMask() {
+        double[] brightMask = this.brightMask.get();
+        double[] horizontalBlurMask = this.horizontalBlurMask.get();
+        double[] blurredMask = this.blurredMask.get();
+
         blurHorizontally(brightMask, horizontalBlurMask);
         blurVertically(horizontalBlurMask, blurredMask);
     }
@@ -227,6 +240,7 @@ public class FrameBleeder extends FrameProcessor {
     }
 
     private double sampleBlurredMask(int x, int y) {
+    	double[] blurredMask = this.blurredMask.get();
         int x0 = xMaskLeft[x];
         int x1 = Math.min(x0 + 1, maskWidth - 1);
         double xBlend = xMaskBlend[x];

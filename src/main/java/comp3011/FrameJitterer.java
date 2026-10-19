@@ -33,8 +33,8 @@ public class FrameJitterer extends FrameProcessor {
 
     private final int instanceIndex;
     private int mediaSeed;
-    private byte[] sourcePixels;
-    private byte[] blackRow;
+    private final ThreadLocal<byte[]> sourcePixels = new ThreadLocal<>();
+    private final ThreadLocal<byte[]> blackRow = new ThreadLocal<>();
 
     public FrameJitterer() {
         super();
@@ -46,10 +46,8 @@ public class FrameJitterer extends FrameProcessor {
         super.initialise(videoInfo);
         mediaSeed = saltedMediaSeed(videoInfo.mediaName(), instanceIndex + SEED_SALT);
 
-        int frameBytes = videoInfo.imageStride() * videoInfo.imageHeight();
-        int widthBytes = videoInfo.imageWidth() * videoInfo.imageChannels();
-        sourcePixels = new byte[frameBytes];
-        blackRow = new byte[widthBytes];
+        sourcePixels.remove();
+        blackRow.remove();
     }
 
     @Override
@@ -129,6 +127,18 @@ public class FrameJitterer extends FrameProcessor {
         int stride = videoInfo.imageStride();
         int frameBytes = stride * height;
         int widthBytes = width * channels;
+        
+        byte[] sourcePixels = this.sourcePixels.get();
+        if (sourcePixels == null || sourcePixels.length != frameBytes) {
+            sourcePixels = new byte[frameBytes];
+            this.sourcePixels.set(sourcePixels);
+        }
+
+        byte[] blackRow = this.blackRow.get();
+        if (blackRow == null || blackRow.length != widthBytes) {
+            blackRow = new byte[widthBytes];
+            this.blackRow.set(blackRow);
+        }
 
         ByteBuffer source = pixels.duplicate();
         source.clear();
