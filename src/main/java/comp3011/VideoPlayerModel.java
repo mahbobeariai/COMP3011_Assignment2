@@ -368,9 +368,11 @@ public class VideoPlayerModel {
 
             int frameNumber = grabber.getFrameNumber();
             InfoFrame info = new InfoFrame(frameNumber, timestampUs);
-            processFrame(frame, info);
 
-            Image image = converter.convert(frame);
+            Frame frameCopy = frame.clone();
+            processFrame(frameCopy, info);
+
+            Image image = converter.convert(frameCopy);
             long relativeTimestampUs = Math.max(0, timestampUs - firstTimestampUs);
             long logicalTimestampUs = logicalPlaybackBaseUs + relativeTimestampUs;
             long targetTimeNs = playbackStartNs + relativeTimestampUs * 1_000L;
