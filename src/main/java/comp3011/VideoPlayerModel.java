@@ -298,10 +298,7 @@ public class VideoPlayerModel {
     }
 
     private void resetPlaybackClock(long logicalTimestampUs) {
-    	for (Future<PreparedFrame> future : pendingFrames) {
-    	    future.cancel(true);
-    	}
-    	pendingFrames.clear();
+    	cancelPendingFrameTasks();
         pendingAudio.clear();
         preparedFrame = null;
         currentTimestampUs = logicalTimestampUs;
@@ -523,10 +520,7 @@ public class VideoPlayerModel {
     	    frameProcessingExecutor.shutdownNow();
     	    frameProcessingExecutor = null;
     	}
-    	for (Future<PreparedFrame> future : pendingFrames) {
-    	    future.cancel(true);
-    	}
-    	pendingFrames.clear();
+    	cancelPendingFrameTasks();
     	
         playbackTimer.stop();
         playbackOpen = false;
@@ -613,6 +607,34 @@ public class VideoPlayerModel {
     
     private boolean isFrameProcessingQueueFull() {
         return pendingFrames.size() >= MAX_PENDING_FRAMES;
+    }
+    
+    private PreparedFrame getNextCompletedFrame() throws Exception {
+        while (!pendingFrames.isEmpty()) {
+            Future<PreparedFrame> nextFrame = pendingFrames.peek();
+
+            if (!nextFrame.isDone()) {
+                return null;
+            }
+
+            pendingFrames.remove();
+
+            if (nextFrame.isCancelled()) {
+                continue;
+            }
+
+            return nextFrame.get();
+        }
+
+        return null;
+    }
+    
+    private void cancelPendingFrameTasks() {
+        for (Future<PreparedFrame> future : pendingFrames) {
+            future.cancel(true);
+        }
+
+        pendingFrames.clear();
     }
 
     private void initialiseFrameProcessors(InfoVideo videoInfo) throws Exception {
