@@ -47,12 +47,14 @@ public class VideoPlayerModel {
 	private static final int MAX_PENDING_FRAMES = WORKER_COUNT * 2;
 	private ExecutorService frameProcessingExecutor;
 	private final Queue<Future<PreparedFrame>> pendingFrames = new ArrayDeque<>();
-	private long playbackGeneration = 0;
+	private volatile long playbackGeneration = 0;
     private static final long NO_SEEK_REQUEST = -1; // Sentinel value used when no seek position is active.
     private static final long FIVE_SECONDS_US = 5_000_000L;
     private static final long AUDIO_LEAD_NS = 30_000_000L;
 
     private final List<FrameProcessor> frameProcessors;
+    private final java.util.concurrent.locks.ReentrantReadWriteLock
+    frameProcessorLock = new java.util.concurrent.locks.ReentrantReadWriteLock();
     private final Queue<PendingAudio> pendingAudio = new ArrayDeque<>();
     private final BiConsumer<Integer, Integer> videoSizeChangedHandler;
     private final Consumer<Image> frameReadyHandler;
@@ -84,6 +86,7 @@ public class VideoPlayerModel {
     private PreparedFrame preparedFrame; // Ours, but is just an Image with some meta-data added.
     private boolean prepareNextFrameQueued; // True only when the event loop needs to call our prepareNextFrame method.
     private boolean playbackOpen; // True when playback is happening.
+    private boolean videoDecodingFinished;
     private boolean pauseRequested;
     private boolean audioOutputEnabled;
     private boolean audioAvailable;
@@ -316,6 +319,7 @@ public class VideoPlayerModel {
 
     private void resetPlaybackClock(long logicalTimestampUs) {
     	playbackGeneration++;
+    	videoDecodingFinished = false;
     	cancelPendingFrameTasks();
         pendingAudio.clear();
         preparedFrame = null;
@@ -335,22 +339,94 @@ public class VideoPlayerModel {
     }
 
     private void prepareNextFrame() {
-        if (!playbackOpen || preparedFrame != null) {
-            return;
-        }
+    	if (!playbackOpen || videoDecodingFinished
+    	        || isFrameProcessingQueueFull()) {
+    	    return;
+    	}
+    	
+    	try {
+    	    DecodedFrame decoded = decodeNextVideoFrame();
 
-        try {
-            preparedFrame = readNextVideoFrame();
-        } catch (Exception e) {
-            handlePlaybackError(e);
-        }
+    	    if (decoded != null) {
+    	        submitDecodedFrame(decoded);
+    	    }
+    	} catch (Exception e) {
+    	    handlePlaybackError(e);
+    	}
     }
+    
+    private DecodedFrame decodeNextVideoFrame() throws Exception {
+        while (playbackOpen && !videoDecodingFinished) {
+            Frame frame = grabFrame();
 
+            if (frame == null) {
+                videoDecodingFinished = true;
+                return null;
+            }
+
+            long timestampUs = grabber.getTimestamp();
+
+            if (audioAvailable && frame.samples != null) {
+                queueAudio(timestampUs, frame);
+            }
+
+            if (frame.image == null) {
+                continue;
+            }
+
+            if (!frameProcessorsInitialised) {
+                initialiseFrameProcessors(new InfoVideo(
+                        mediaName(videoFile),
+                        totalVideoFrames,
+                        frame.imageWidth,
+                        frame.imageHeight,
+                        frame.imageDepth,
+                        frame.imageChannels,
+                        frame.imageStride,
+                        frameRate,
+                        intFrameRate,
+                        videoFrameDurationUs,
+                        grabber.getPixelFormat()));
+                frameProcessorsInitialised = true;
+            }
+
+            if (firstTimestampUs == NO_SEEK_REQUEST) {
+                firstTimestampUs = timestampUs;
+                playbackStartNs = System.nanoTime();
+
+                if (pauseRequested) {
+                    pauseStartedNs = playbackStartNs;
+                }
+            }
+
+            int frameNumber = grabber.getFrameNumber();
+            InfoFrame info = new InfoFrame(frameNumber, timestampUs);
+
+            long relativeTimestampUs =
+                    Math.max(0, timestampUs - firstTimestampUs);
+            long logicalTimestampUs =
+                    logicalPlaybackBaseUs + relativeTimestampUs;
+            long targetTimeNs =
+                    playbackStartNs + relativeTimestampUs * 1_000L;
+
+            return new DecodedFrame(
+                    frame.clone(),
+                    info,
+                    frameNumber,
+                    timestampUs,
+                    logicalTimestampUs,
+                    targetTimeNs,
+                    getPlaybackGeneration());
+        }
+
+        return null;
+    }
+    
     private PreparedFrame readNextVideoFrame() throws Exception {
         while (playbackOpen) {
             Frame frame = grabFrame();
             if (frame == null) {
-                finishPlayback();
+                videoDecodingFinished = true;
                 return null;
             }
 
@@ -420,13 +496,20 @@ public class VideoPlayerModel {
         if (!playbackOpen) {
             return;
         }
-
+        
+        try {
+            collectCompletedFrame();
+        } catch (Exception e) {
+            handlePlaybackError(e);
+            return;
+        }
+        
         // Task (1)
         writeDueAudio(now);
 
         // Task (2)
-        if (preparedFrame != null && preparedFrame.targetTimeNs() <= now) {
-            // We have a prepared frame ready to go and it is due (or just past due!) so get it up on screen ASAP!
+        if (!pauseRequested && preparedFrame != null
+                && preparedFrame.targetTimeNs() <= now) {
             displayPreparedFrame(now);
         }
 
@@ -435,15 +518,25 @@ public class VideoPlayerModel {
         // to replace this whole block with simple linear control flow logic
         // such as: if (!pauseRequested && preparedFrame == null) prepareNextFrame();
         // to compare.
-        if (!pauseRequested && preparedFrame == null && !prepareNextFrameQueued) {
+        if (!pauseRequested && !videoDecodingFinished
+                && !isFrameProcessingQueueFull()
+                && !prepareNextFrameQueued) {
+
             prepareNextFrameQueued = true;
+
             Platform.runLater(() -> {
                 prepareNextFrameQueued = false;
 
-                if (!pauseRequested) {
+                if (playbackOpen && !pauseRequested
+                        && !videoDecodingFinished
+                        && !isFrameProcessingQueueFull()) {
                     prepareNextFrame();
                 }
             });
+        }
+        if (videoDecodingFinished && preparedFrame == null
+                && pendingFrames.isEmpty()) {
+            finishPlayback();
         }
     }
 
@@ -535,6 +628,7 @@ public class VideoPlayerModel {
 
     private void closePlaybackResources() {
     	playbackGeneration++;
+    	videoDecodingFinished = false;
     	if (frameProcessingExecutor != null) {
     	    frameProcessingExecutor.shutdownNow();
     	    frameProcessingExecutor = null;
@@ -609,8 +703,14 @@ public class VideoPlayerModel {
     }
 
     private void processFrame(Frame frame, InfoFrame info) throws Exception {
-        for (FrameProcessor processor : frameProcessors) {
-            processor.process(frame, info);
+        frameProcessorLock.readLock().lock();
+
+        try {
+            for (FrameProcessor processor : frameProcessors) {
+                processor.process(frame, info);
+            }
+        } finally {
+            frameProcessorLock.readLock().unlock();
         }
     }
     
@@ -618,7 +718,8 @@ public class VideoPlayerModel {
         Frame frame = decoded.frame();
 
         try {
-        	if (Thread.currentThread().isInterrupted()) {
+        	if (Thread.currentThread().isInterrupted()
+        	        || !isCurrentPlaybackGeneration(decoded.generation())) {
         	    return null;
         	}
             processFrame(frame, decoded.info());
@@ -637,6 +738,51 @@ public class VideoPlayerModel {
             frame.close();
         }
     }
+    private void submitDecodedFrame(DecodedFrame decoded) {
+        java.util.concurrent.FutureTask<PreparedFrame> task =
+                new java.util.concurrent.FutureTask<>(
+                        () -> processDecodedFrame(decoded)) {
+
+                    private boolean started;
+
+                    @Override
+                    public void run() {
+                        synchronized (this) {
+                            if (isCancelled()) {
+                                return;
+                            }
+                            started = true;
+                        }
+
+                        super.run();
+                    }
+
+                    @Override
+                    public boolean cancel(boolean mayInterruptIfRunning) {
+                        synchronized (this) {
+                            boolean cancelled = super.cancel(mayInterruptIfRunning);
+
+                            if (cancelled && !started) {
+                                try {
+                                    decoded.frame().close();
+                                } catch (Exception e) {
+                                    e.printStackTrace();
+                                }
+                            }
+
+                            return cancelled;
+                        }
+                    }
+                };
+
+                try {
+                    frameProcessingExecutor.execute(task);
+                    pendingFrames.add(task);
+                } catch (java.util.concurrent.RejectedExecutionException e) {
+                    task.cancel(false);
+                    throw e;
+                }
+    }
     
     private Future<PreparedFrame> submitFrameProcessingTask(
         java.util.concurrent.Callable<PreparedFrame> task) {
@@ -649,7 +795,13 @@ public class VideoPlayerModel {
     }
     
     private boolean isFrameProcessingQueueFull() {
-        return pendingFrames.size() >= MAX_PENDING_FRAMES;
+        int bufferedFrames = pendingFrames.size();
+
+        if (preparedFrame != null) {
+            bufferedFrames++;
+        }
+
+        return bufferedFrames >= MAX_PENDING_FRAMES;
     }
     
     private PreparedFrame getNextCompletedFrame() throws Exception {
@@ -672,6 +824,18 @@ public class VideoPlayerModel {
         return null;
     }
     
+    private void collectCompletedFrame() throws Exception {
+        if (preparedFrame != null) {
+            return;
+        }
+
+        PreparedFrame completed = getNextCompletedFrame();
+
+        if (completed != null) {
+            preparedFrame = completed;
+        }
+    }
+    
     private void cancelPendingFrameTasks() {
         for (Future<PreparedFrame> future : pendingFrames) {
             future.cancel(true);
@@ -689,8 +853,14 @@ public class VideoPlayerModel {
     }
 
     private void initialiseFrameProcessors(InfoVideo videoInfo) throws Exception {
-        for (FrameProcessor processor : frameProcessors) {
-            processor.initialise(videoInfo);
+        frameProcessorLock.writeLock().lock();
+
+        try {
+            for (FrameProcessor processor : frameProcessors) {
+                processor.initialise(videoInfo);
+            }
+        } finally {
+            frameProcessorLock.writeLock().unlock();
         }
     }
 
