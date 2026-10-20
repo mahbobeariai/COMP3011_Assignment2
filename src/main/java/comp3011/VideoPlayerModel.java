@@ -44,7 +44,7 @@ import java.util.concurrent.Future;
 public class VideoPlayerModel {
 	private static final int WORKER_COUNT =
 	        Math.max(1, Runtime.getRuntime().availableProcessors() - 2);
-
+	private static final int MAX_PENDING_FRAMES = WORKER_COUNT * 2;
 	private ExecutorService frameProcessingExecutor;
 	private final Queue<Future<PreparedFrame>> pendingFrames = new ArrayDeque<>();
     private static final long NO_SEEK_REQUEST = -1; // Sentinel value used when no seek position is active.
@@ -601,10 +601,18 @@ public class VideoPlayerModel {
         }
     }
     
-    private void submitFrameProcessingTask(Runnable task) {
-        if (frameProcessingExecutor != null) {
-            frameProcessingExecutor.submit(task);
+    private Future<PreparedFrame> submitFrameProcessingTask(
+        java.util.concurrent.Callable<PreparedFrame> task) {
+
+        if (frameProcessingExecutor == null) {
+            throw new IllegalStateException("Frame processing executor is not running");
         }
+
+        return frameProcessingExecutor.submit(task);
+    }
+    
+    private boolean isFrameProcessingQueueFull() {
+        return pendingFrames.size() >= MAX_PENDING_FRAMES;
     }
 
     private void initialiseFrameProcessors(InfoVideo videoInfo) throws Exception {
