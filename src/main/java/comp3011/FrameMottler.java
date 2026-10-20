@@ -58,9 +58,10 @@ public class FrameMottler extends FrameProcessor {
 
     private final int instanceIndex;
     private int mediaSeed;
-    private int cachedDamageMaskSegment = Integer.MIN_VALUE;
-    private double[] damageMaskA;
-    private double[] damageMaskB;
+    private final ThreadLocal<Integer> cachedDamageMaskSegment =
+            ThreadLocal.withInitial(() -> Integer.MIN_VALUE);
+    private final ThreadLocal<double[]> damageMaskA = new ThreadLocal<>();
+    private final ThreadLocal<double[]> damageMaskB = new ThreadLocal<>();
     private int[] xGridLeft;
     private double[] xGridBlend;
     private int[] yGridTop;
@@ -68,9 +69,9 @@ public class FrameMottler extends FrameProcessor {
     private byte[][] scaleLookups;
     private double minimumScale;
     private double maximumScale;
-    private int blockBlueScaleIndex;
-    private int blockGreenScaleIndex;
-    private int blockRedScaleIndex;
+    private final ThreadLocal<Integer> blockBlueScaleIndex = new ThreadLocal<>();
+    private final ThreadLocal<Integer> blockGreenScaleIndex = new ThreadLocal<>();
+    private final ThreadLocal<Integer> blockRedScaleIndex = new ThreadLocal<>();
 
     public FrameMottler() {
         super();
@@ -80,6 +81,10 @@ public class FrameMottler extends FrameProcessor {
     @Override
     public void initialise(InfoVideo videoInfo) throws Exception {
         super.initialise(videoInfo);
+        cachedDamageMaskSegment.remove();
+        damageMaskA.remove();
+        damageMaskB.remove();
+        
         mediaSeed = saltedMediaSeed(videoInfo.mediaName(), instanceIndex + SEED_SALT);
         buildSamplingLookups();
         buildScaleLookups();
@@ -172,13 +177,14 @@ public class FrameMottler extends FrameProcessor {
     }
 
     private void ensureDamageMaskFields(int segment) {
-        if (segment == cachedDamageMaskSegment) {
+        if (segment == cachedDamageMaskSegment.get()) {
             return;
         }
 
-        cachedDamageMaskSegment = segment;
-        damageMaskA = buildNoiseField(segment, DAMAGE_MASK_SALT, DAMAGE_MASK_SMOOTHING_PASSES);
-        damageMaskB = buildNoiseField(segment + 1, DAMAGE_MASK_SALT, DAMAGE_MASK_SMOOTHING_PASSES);
+        damageMaskA.set(buildNoiseField(segment, DAMAGE_MASK_SALT, DAMAGE_MASK_SMOOTHING_PASSES));
+        damageMaskB.set(buildNoiseField(segment + 1, DAMAGE_MASK_SALT, DAMAGE_MASK_SMOOTHING_PASSES));
+
+        cachedDamageMaskSegment.set(segment);
     }
 
     private double[] buildMultiScaleNoiseField(int frameNumber, int fieldSalt) {
@@ -327,8 +333,8 @@ public class FrameMottler extends FrameProcessor {
     }
 
     private double sampleDamageMask(int x, int y, double damageMaskBlend) {
-        double maskA = sampleField(damageMaskA, x, y);
-        double maskB = sampleField(damageMaskB, x, y);
+        double maskA = sampleField(damageMaskA.get(), x, y);
+        double maskB = sampleField(damageMaskB.get(), x, y);
         double mask = smoothstep(lerp(maskA, maskB, damageMaskBlend));
         return smoothstep((mask - DAMAGE_MASK_THRESHOLD) / (1.0 - DAMAGE_MASK_THRESHOLD));
     }
@@ -363,9 +369,9 @@ public class FrameMottler extends FrameProcessor {
         double greenScale = brightnessScale * (1.0 + stainStrength * GREEN_STAIN_BOOST_PERCENTAGE / 100.0);
         double redScale = brightnessScale * (1.0 + stainStrength * RED_STAIN_BOOST_PERCENTAGE / 100.0);
 
-        blockBlueScaleIndex = scaleIndex(blueScale);
-        blockGreenScaleIndex = scaleIndex(greenScale);
-        blockRedScaleIndex = scaleIndex(redScale);
+        blockBlueScaleIndex.set(scaleIndex(blueScale));
+        blockGreenScaleIndex.set(scaleIndex(greenScale));
+        blockRedScaleIndex.set(scaleIndex(redScale));
     }
 
     private void applyMottleBlock(
@@ -376,9 +382,9 @@ public class FrameMottler extends FrameProcessor {
             int blockYEnd,
             int channels,
             int stride) {
-        byte[] blueLookup = scaleLookups[blockBlueScaleIndex];
-        byte[] greenLookup = scaleLookups[blockGreenScaleIndex];
-        byte[] redLookup = scaleLookups[blockRedScaleIndex];
+    	byte[] blueLookup = scaleLookups[blockBlueScaleIndex.get()];
+    	byte[] greenLookup = scaleLookups[blockGreenScaleIndex.get()];
+    	byte[] redLookup = scaleLookups[blockRedScaleIndex.get()];
 
         for (int y = blockY; y < blockYEnd; y++) {
             int rowStart = y * stride;
