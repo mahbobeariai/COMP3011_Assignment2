@@ -47,6 +47,7 @@ public class VideoPlayerModel {
 	private static final int MAX_PENDING_FRAMES = WORKER_COUNT * 2;
 	private ExecutorService frameProcessingExecutor;
 	private final Queue<Future<PreparedFrame>> pendingFrames = new ArrayDeque<>();
+	private long playbackGeneration = 0;
     private static final long NO_SEEK_REQUEST = -1; // Sentinel value used when no seek position is active.
     private static final long FIVE_SECONDS_US = 5_000_000L;
     private static final long AUDIO_LEAD_NS = 30_000_000L;
@@ -77,6 +78,8 @@ public class VideoPlayerModel {
     private File videoFile; // Path to the media that comes from the command line
     private FFmpegFrameGrabber grabber; // This is the 3rd party video media decoder. It deals in JavaCV Frame objects.
     private JavaFXFrameConverter converter; // Takes Frame objects to JavaFX Image objects, which can be put on screen.
+    private final ThreadLocal<JavaFXFrameConverter> workerConverters =
+            ThreadLocal.withInitial(JavaFXFrameConverter::new);
     private AudioPlayer audioPlayer; // This is ours. It has some real time buffering smarts.
     private PreparedFrame preparedFrame; // Ours, but is just an Image with some meta-data added.
     private boolean prepareNextFrameQueued; // True only when the event loop needs to call our prepareNextFrame method.
@@ -265,7 +268,21 @@ public class VideoPlayerModel {
     }
 
     private void openPlaybackResources(long startTimestampUs) throws Exception {
-    	frameProcessingExecutor = Executors.newFixedThreadPool(WORKER_COUNT);
+    	frameProcessingExecutor = Executors.newFixedThreadPool(WORKER_COUNT, task -> {
+    	    Thread worker = new Thread(() -> {
+    	        try {
+    	            task.run();
+    	        } finally {
+    	            JavaFXFrameConverter workerConverter = workerConverters.get();
+    	            workerConverter.close();
+    	            workerConverters.remove();
+    	        }
+    	    });
+
+    	    worker.setName("video-frame-worker");
+    	    worker.setDaemon(true);
+    	    return worker;
+    	});
         converter = new JavaFXFrameConverter();
         grabber = new FFmpegFrameGrabber(videoFile);
         grabber.setImageMode(FrameGrabber.ImageMode.COLOR);
@@ -298,6 +315,7 @@ public class VideoPlayerModel {
     }
 
     private void resetPlaybackClock(long logicalTimestampUs) {
+    	playbackGeneration++;
     	cancelPendingFrameTasks();
         pendingAudio.clear();
         preparedFrame = null;
@@ -516,6 +534,7 @@ public class VideoPlayerModel {
     }
 
     private void closePlaybackResources() {
+    	playbackGeneration++;
     	if (frameProcessingExecutor != null) {
     	    frameProcessingExecutor.shutdownNow();
     	    frameProcessingExecutor = null;
@@ -595,6 +614,30 @@ public class VideoPlayerModel {
         }
     }
     
+    private PreparedFrame processDecodedFrame(DecodedFrame decoded) throws Exception {
+        Frame frame = decoded.frame();
+
+        try {
+        	if (Thread.currentThread().isInterrupted()) {
+        	    return null;
+        	}
+            processFrame(frame, decoded.info());
+
+            Image image = workerConverters.get().convert(frame);
+
+            return new PreparedFrame(
+                    image,
+                    decoded.frameNumber(),
+                    decoded.mediaTimestampUs(),
+                    decoded.logicalTimestampUs(),
+                    decoded.targetTimeNs(),
+                    System.nanoTime());
+
+        } finally {
+            frame.close();
+        }
+    }
+    
     private Future<PreparedFrame> submitFrameProcessingTask(
         java.util.concurrent.Callable<PreparedFrame> task) {
 
@@ -636,6 +679,14 @@ public class VideoPlayerModel {
 
         pendingFrames.clear();
     }
+    
+    private boolean isCurrentPlaybackGeneration(long generation) {
+        return generation == playbackGeneration;
+    }
+    
+    private long getPlaybackGeneration() {
+        return playbackGeneration;
+    }
 
     private void initialiseFrameProcessors(InfoVideo videoInfo) throws Exception {
         for (FrameProcessor processor : frameProcessors) {
@@ -675,7 +726,17 @@ public class VideoPlayerModel {
     private void notifyAudioOutputStateChanged() {
         audioOutputStateChangedHandler.accept(audioOutputEnabled);
     }
-
+    
+    private record DecodedFrame(
+            Frame frame,
+            InfoFrame info,
+            int frameNumber,
+            long mediaTimestampUs,
+            long logicalTimestampUs,
+            long targetTimeNs,
+            long generation) {
+    }
+    
     private record PreparedFrame(
             Image image,
             int frameNumber,
