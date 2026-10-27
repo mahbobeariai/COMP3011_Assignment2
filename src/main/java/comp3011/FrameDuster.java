@@ -4,8 +4,8 @@
  * 
  * Authors:
  *   1. Simon Ratcliffe, in collaboration with GPT-5.6 Terra
- *   2. <student name and student number insert here upon modification>
- *
+ *   2. Mahboba Ariai - a2957620
+ *   
  * Copyright 2026 Simon Ratcliffe
  */
 package comp3011;

@@ -4,7 +4,7 @@
  * 
  * Authors:
  *   1. Simon Ratcliffe, in collaboration with GPT-5.6 Terra
- *   2. <student name and student number insert here upon modification>
+ *   2. Mahboba Ariai - a2957620
  *
  * Copyright 2026 Simon Ratcliffe
  */
@@ -82,6 +82,8 @@ public class CommandLineController {
         return "nsfwyvdjmbp".indexOf(option) >= 0;
     }
     private Character getEffectLetter(String option) {
+    	// To add a new effect, update the option mappings, isFrameEffect(),
+    	// and printHelp(), then create its processor in VideoPlayerModel.
         return switch (option) {
             case "--number-frames" -> 'n';
             case "--scratch-frames" -> 's';

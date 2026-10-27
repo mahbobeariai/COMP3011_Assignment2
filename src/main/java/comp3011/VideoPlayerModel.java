@@ -4,7 +4,7 @@
  * 
  * Authors:
  *   1. Simon Ratcliffe, in collaboration with GPT-5.6 Terra
- *   2. <student name and student number insert here upon modification>
+ *   2. Mahboba Ariai - a2957620
  *
  * Copyright 2026 Simon Ratcliffe
  */
@@ -35,8 +35,8 @@ import java.util.concurrent.Future;
  *
  * <p>
  * Owns the FFmpeg decoder, playback clock, seeking logic, audio scheduling,
- * and frame processing - which it all manages through cooperative multi-tasking
- * on a single thread. It publishes decoded frames and playback state through
+ * and frame processing - which it all manages using multiple worker threads
+ * for concurrent frame processing. It publishes decoded frames and playback state through
  * callbacks supplied by its owning {@link VideoPlayerController}, keeping it
  * decoupled from the JavaFX view.
  * </p>
@@ -61,7 +61,8 @@ public class VideoPlayerModel {
     private final Consumer<String> statusChangedHandler;
     private final BiConsumer<Boolean, Boolean> playbackStateChangedHandler;
     private final Consumer<Boolean> audioOutputStateChangedHandler;
-
+    
+    //
     // This is the critical wiring that allows the framework (JavaFX) to call
     // into our model logic every time it goes around its event loop. Every GUI
     // system has an event loop so that button clicks, key presses and window
@@ -490,8 +491,8 @@ public class VideoPlayerModel {
     // getting our required work out of the way quickly so that we can return control flow to the JavaFX event loop for
     // handling user interaction with the GUI and rendering. We have three jobs: (1) keep audio flowing if sound is on,
     // (2) display a frame if it is due and (3) prepare the next frame if we're in the window after the previous frame
-    // has gone to the display. We don't buffer frames here, just handling them one at a time. Not a great architecture,
-    // living on the edge a bit, but can't do much better on a single thread.
+	// has gone to the display. Frames are processed concurrently by background
+	// worker threads and collected in submission order for playback.
     private void pumpPlayback(long now) {
         if (!playbackOpen) {
             return;
@@ -513,26 +514,12 @@ public class VideoPlayerModel {
             displayPreparedFrame(now);
         }
 
-        // Task (3). We'll try and be nice to the GUI event loop here by queueing the prepareNextFrame call rather than
-        // hogging the thread and doing it here, hence the tricky callback and use of prepareNextFrameQueued. Feel free
-        // to replace this whole block with simple linear control flow logic
-        // such as: if (!pauseRequested && preparedFrame == null) prepareNextFrame();
-        // to compare.
+	     // Task (3). Decode and submit the next frame for background processing
+	     // when playback is active and the pending frame queue has capacity.
+	     // The bounded queue prevents too many frames from being scheduled.
         if (!pauseRequested && !videoDecodingFinished
-                && !isFrameProcessingQueueFull()
-                && !prepareNextFrameQueued) {
-
-            prepareNextFrameQueued = true;
-
-            Platform.runLater(() -> {
-                prepareNextFrameQueued = false;
-
-                if (playbackOpen && !pauseRequested
-                        && !videoDecodingFinished
-                        && !isFrameProcessingQueueFull()) {
-                    prepareNextFrame();
-                }
-            });
+                && !isFrameProcessingQueueFull()) {
+            prepareNextFrame();
         }
         if (videoDecodingFinished && preparedFrame == null
                 && pendingFrames.isEmpty()) {

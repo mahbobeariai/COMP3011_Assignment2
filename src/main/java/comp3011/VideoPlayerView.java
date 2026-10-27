@@ -4,7 +4,7 @@
  * 
  * Authors:
  *   1. Simon Ratcliffe, in collaboration with GPT-5.6 Terra
- *   2. <student name and student number insert here upon modification>
+ *   2. Mahboba Ariai - a2957620
  *
  * Copyright 2026 Simon Ratcliffe
  */
@@ -38,8 +38,8 @@ import javafx.scene.shape.StrokeLineCap;
  * This is the JavaFX presentation layer for the video player. It builds the
  * scene graph containing the video surface, playback controls, status display,
  * and tooltips. It exposes controls and display-update methods for
- * {@link VideoPlayerController}, but contains no playback logic (which all lives
- * in the controller).
+ * {@link VideoPlayerController}, but contains no playback logic (which is
+ * handled by the model).
  * </p>
  */
 public class VideoPlayerView {

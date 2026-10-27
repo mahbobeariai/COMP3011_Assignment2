@@ -4,7 +4,7 @@
  * 
  * Authors:
  *   1. Simon Ratcliffe, in collaboration with GPT-5.6 Terra
- *   2. <student name and student number insert here upon modification>
+ *   2. Mahboba Ariai - a2957620
  *
  * Copyright 2026 Simon Ratcliffe
  */
@@ -213,28 +213,57 @@ public class FrameBleeder extends FrameProcessor {
     }
 
     private void applyBleed(ByteBuffer pixels) {
-        int width = videoInfo.imageWidth();
-        int height = videoInfo.imageHeight();
-        int channels = videoInfo.imageChannels();
-        int stride = videoInfo.imageStride();
+        final int width = videoInfo.imageWidth();
+        final int height = videoInfo.imageHeight();
+        final int channels = videoInfo.imageChannels();
+        final int stride = videoInfo.imageStride();
+
+        final double[] mask = blurredMask.get();
+        final int[] xLeft = xMaskLeft;
+        final double[] xBlend = xMaskBlend;
+        final int[] yTop = yMaskTop;
+        final double[] yBlend = yMaskBlend;
+        final int mw = maskWidth;
 
         for (int y = 0; y < height; y++) {
-            int rowStart = y * stride;
+            int topRow = yTop[y] * mw;
+            int bottomRow = Math.min(yTop[y] + 1, maskHeight - 1) * mw;
+            double fy = yBlend[y];
 
-            for (int x = 0; x < width; x++) {
-                double bleedStrength = sampleBlurredMask(x, y);
-                if (bleedStrength <= 0.0) {
+            int base = y * stride;
+
+            for (int x = 0; x < width; x++, base += channels) {
+                int left = xLeft[x];
+                int right = Math.min(left + 1, mw - 1);
+                double fx = xBlend[x];
+
+                double top = mask[topRow + left]
+                        + (mask[topRow + right] - mask[topRow + left]) * fx;
+
+                double bottom = mask[bottomRow + left]
+                        + (mask[bottomRow + right] - mask[bottomRow + left]) * fx;
+
+                double strength = Math.min(
+                        1.0,
+                        (top + (bottom - top) * fy) * BLEED_MASK_GAIN
+                );
+
+                if (strength <= 0.0) {
                     continue;
                 }
 
-                int blueBoost = (int) Math.round(bleedStrength * BLUE_BLEED_STRENGTH);
-                int greenBoost = (int) Math.round(bleedStrength * GREEN_BLEED_STRENGTH);
-                int redBoost = (int) Math.round(bleedStrength * RED_BLEED_STRENGTH);
-                int base = rowStart + x * channels;
+                int blueBoost = (int) Math.round(strength * BLUE_BLEED_STRENGTH);
+                int greenBoost = (int) Math.round(strength * GREEN_BLEED_STRENGTH);
+                int redBoost = (int) Math.round(strength * RED_BLEED_STRENGTH);
 
-                pixels.put(base, boostedByte(pixels.get(base), blueBoost));
-                pixels.put(base + 1, boostedByte(pixels.get(base + 1), greenBoost));
-                pixels.put(base + 2, boostedByte(pixels.get(base + 2), redBoost));
+                pixels.put(base,
+                        (byte) Math.min(255, (pixels.get(base) & 0xFF) + blueBoost));
+
+                pixels.put(base + 1,
+                        (byte) Math.min(255, (pixels.get(base + 1) & 0xFF) + greenBoost));
+
+                pixels.put(base + 2,
+                        (byte) Math.min(255, (pixels.get(base + 2) & 0xFF) + redBoost));
             }
         }
     }

@@ -4,7 +4,7 @@
  * 
  * Authors:
  *   1. Simon Ratcliffe, in collaboration with GPT-5.6 Terra
- *   2. <student name and student number insert here upon modification>
+ *   2. Mahboba Ariai - a2957620
  *
  * Copyright 2026 Simon Ratcliffe
  */
@@ -69,9 +69,6 @@ public class FrameMottler extends FrameProcessor {
     private byte[][] scaleLookups;
     private double minimumScale;
     private double maximumScale;
-    private final ThreadLocal<Integer> blockBlueScaleIndex = new ThreadLocal<>();
-    private final ThreadLocal<Integer> blockGreenScaleIndex = new ThreadLocal<>();
-    private final ThreadLocal<Integer> blockRedScaleIndex = new ThreadLocal<>();
 
     public FrameMottler() {
         super();
@@ -245,7 +242,7 @@ public class FrameMottler extends FrameProcessor {
                 for (int dy = -1; dy <= 1; dy++) {
                     int sampleY = clamp(y + dy, 0, NOISE_GRID_HEIGHT - 1);
                     for (int dx = -1; dx <= 1; dx++) {
-                        int sampleX = clamp(x + dx, 0, NOISE_GRID_WIDTH - 1);
+                    	int sampleX = clamp(x + dx, 0, NOISE_GRID_WIDTH - 1);
                         total += source[sampleY * NOISE_GRID_WIDTH + sampleX];
                         samples++;
                     }
@@ -284,6 +281,9 @@ public class FrameMottler extends FrameProcessor {
         int width = videoInfo.imageWidth();
         int channels = videoInfo.imageChannels();
         int stride = videoInfo.imageStride();
+        int[] indices = new int[3];
+        double[] maskA = damageMaskA.get();
+        double[] maskB = damageMaskB.get();
 
         for (int blockY = 0; blockY < height; blockY += EFFECT_BLOCK_SIZE) {
             int blockYEnd = Math.min(blockY + EFFECT_BLOCK_SIZE, height);
@@ -293,12 +293,17 @@ public class FrameMottler extends FrameProcessor {
                 int blockXEnd = Math.min(blockX + EFFECT_BLOCK_SIZE, width);
                 int sampleX = (blockX + blockXEnd - 1) / 2;
 
-                if (!prepareScaleIndicesForBlock(
+                boolean hasIndices = prepareScaleIndicesForBlock(
                         sampleX,
                         sampleY,
                         brightnessField,
                         stainField,
-                        damageMaskBlend)) {
+                        damageMaskBlend,
+                        indices,
+                        maskA,
+                        maskB);
+
+                if (!hasIndices) {
                     continue;
                 }
 
@@ -309,7 +314,8 @@ public class FrameMottler extends FrameProcessor {
                         blockY,
                         blockYEnd,
                         channels,
-                        stride);
+                        stride,
+                        indices);
             }
         }
     }
@@ -319,8 +325,13 @@ public class FrameMottler extends FrameProcessor {
             int y,
             double[] brightnessField,
             double[] stainField,
-            double damageMaskBlend) {
-        double damageStrength = sampleDamageMask(x, y, damageMaskBlend);
+            double damageMaskBlend,
+            int[] indices,
+            double[] maskA,
+            double[] maskB) {
+
+    	double damageStrength = sampleDamageMask(x, y, damageMaskBlend, maskA, maskB);
+
         if (damageStrength <= 0.0) {
             return false;
         }
@@ -328,24 +339,31 @@ public class FrameMottler extends FrameProcessor {
         double brightness = smoothstep(sampleField(brightnessField, x, y));
         double stain = smoothstep(sampleField(stainField, x, y));
 
-        setBlockScaleIndices(brightness, stain, damageStrength);
+        calculateBlockScaleIndices(brightness, stain, damageStrength, indices);
         return true;
     }
 
-    private double sampleDamageMask(int x, int y, double damageMaskBlend) {
-        double maskA = sampleField(damageMaskA.get(), x, y);
-        double maskB = sampleField(damageMaskB.get(), x, y);
-        double mask = smoothstep(lerp(maskA, maskB, damageMaskBlend));
+    private double sampleDamageMask(
+            int x,
+            int y,
+            double damageMaskBlend,
+            double[] maskA,
+            double[] maskB) {
+
+        double valueA = sampleField(maskA, x, y);
+        double valueB = sampleField(maskB, x, y);
+        double mask = smoothstep(lerp(valueA, valueB, damageMaskBlend));
+
         return smoothstep((mask - DAMAGE_MASK_THRESHOLD) / (1.0 - DAMAGE_MASK_THRESHOLD));
     }
 
     private double sampleField(double[] field, int x, int y) {
         int x0 = xGridLeft[x];
-        int x1 = Math.min(x0 + 1, NOISE_GRID_WIDTH - 1);
+        int x1 = x0 + 1;
         double xBlend = xGridBlend[x];
 
         int y0 = yGridTop[y];
-        int y1 = Math.min(y0 + 1, NOISE_GRID_HEIGHT - 1);
+        int y1 = y0 + 1;
         double yBlend = yGridBlend[y];
 
         double top = lerp(field[y0 * NOISE_GRID_WIDTH + x0], field[y0 * NOISE_GRID_WIDTH + x1], xBlend);
@@ -353,7 +371,11 @@ public class FrameMottler extends FrameProcessor {
         return lerp(top, bottom, yBlend);
     }
 
-    private void setBlockScaleIndices(double brightness, double stain, double damageStrength) {
+    private void calculateBlockScaleIndices(
+            double brightness,
+            double stain,
+            double damageStrength,
+            int[] indices) {
         double brightnessScale;
         if (brightness < 0.5) {
             brightnessScale = 1.0 - (0.5 - brightness) * 2.0 * MAX_DARKEN_PERCENTAGE / 100.0;
@@ -369,9 +391,9 @@ public class FrameMottler extends FrameProcessor {
         double greenScale = brightnessScale * (1.0 + stainStrength * GREEN_STAIN_BOOST_PERCENTAGE / 100.0);
         double redScale = brightnessScale * (1.0 + stainStrength * RED_STAIN_BOOST_PERCENTAGE / 100.0);
 
-        blockBlueScaleIndex.set(scaleIndex(blueScale));
-        blockGreenScaleIndex.set(scaleIndex(greenScale));
-        blockRedScaleIndex.set(scaleIndex(redScale));
+        indices[0] = scaleIndex(blueScale);
+        indices[1] = scaleIndex(greenScale);
+        indices[2] = scaleIndex(redScale);
     }
 
     private void applyMottleBlock(
@@ -381,20 +403,21 @@ public class FrameMottler extends FrameProcessor {
             int blockY,
             int blockYEnd,
             int channels,
-            int stride) {
-    	byte[] blueLookup = scaleLookups[blockBlueScaleIndex.get()];
-    	byte[] greenLookup = scaleLookups[blockGreenScaleIndex.get()];
-    	byte[] redLookup = scaleLookups[blockRedScaleIndex.get()];
+            int stride,
+            int[] indices) {
+    	
+
+        byte[] blueLookup = scaleLookups[indices[0]];
+        byte[] greenLookup = scaleLookups[indices[1]];
+        byte[] redLookup = scaleLookups[indices[2]];
 
         for (int y = blockY; y < blockYEnd; y++) {
-            int rowStart = y * stride;
-            for (int x = blockX; x < blockXEnd; x++) {
-                int base = rowStart + x * channels;
+            int base = y * stride + blockX * channels;
 
-                // JavaCV supplies these decoded frames in BGR byte order.
-                pixels.put(base, blueLookup[Byte.toUnsignedInt(pixels.get(base))]);
-                pixels.put(base + 1, greenLookup[Byte.toUnsignedInt(pixels.get(base + 1))]);
-                pixels.put(base + 2, redLookup[Byte.toUnsignedInt(pixels.get(base + 2))]);
+            for (int x = blockX; x < blockXEnd; x++, base += channels) {
+                pixels.put(base, blueLookup[pixels.get(base) & 0xFF]);
+                pixels.put(base + 1, greenLookup[pixels.get(base + 1) & 0xFF]);
+                pixels.put(base + 2, redLookup[pixels.get(base + 2) & 0xFF]);
             }
         }
     }

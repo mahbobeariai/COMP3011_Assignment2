@@ -4,7 +4,7 @@
  * 
  * Authors:
  *   1. Simon Ratcliffe, in collaboration with GPT-5.6 Terra
- *   2. <student name and student number insert here upon modification>
+ *   2. Mahboba Ariai - a2957620
  *
  * Copyright 2026 Simon Ratcliffe
  */
@@ -22,8 +22,9 @@ import java.util.List;
  * The controller part of the video player model-view-controller architecture.
  * 
  * <p>
- * Wires up events from the {@link VideoPlayerView} to the {@link VideoPlayerModel}.
- * This includes button actions, keyboard shortcuts and display resizing.
+ * Connects the {@link VideoPlayerView} and {@link VideoPlayerModel}.
+ * Handles button actions, keyboard shortcuts, and updates the view
+ * when processed frames and playback status are received.
  * </p>
  */
 public class VideoPlayerController {

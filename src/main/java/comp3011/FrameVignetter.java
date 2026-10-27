@@ -4,7 +4,7 @@
  * 
  * Authors:
  *   1. Simon Ratcliffe, in collaboration with GPT-5.6 Terra
- *   2. <student name and student number insert here upon modification>
+ *   2. Mahboba Ariai - a2957620
  *
  * Copyright 2026 Simon Ratcliffe
  */
@@ -26,9 +26,9 @@ import org.bytedeco.javacv.Frame;
  */
 public class FrameVignetter extends FrameProcessor {
     private static final double EDGE_FADE_PERCENTAGE = 40.0;
-
     private byte[][] xLookups;
     private byte[][] yLookups;
+    
 
     public FrameVignetter() {
         super();

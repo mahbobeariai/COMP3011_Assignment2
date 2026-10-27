@@ -4,7 +4,7 @@
  * 
  * Authors:
  *   1. Simon Ratcliffe, in collaboration with GPT-5.6 Terra
- *   2. <student name and student number insert here upon modification>
+ *   2. Mahboba Ariai - a2957620
  *
  * Copyright 2026 Simon Ratcliffe
  */
@@ -66,7 +66,11 @@ public class FrameBlackAndWhiter extends FrameProcessor {
                 int r = Byte.toUnsignedInt(pixels.get(base + 2));
                 byte luminance = (byte) ((54 * r + 183 * g + 19 * b) / 256);
 
-                for (int channel = 0; channel < channels; channel++) {
+                pixels.put(base, luminance);
+                pixels.put(base + 1, luminance);
+                pixels.put(base + 2, luminance);
+
+                for (int channel = 3; channel < channels; channel++) {
                     pixels.put(base + channel, luminance);
                 }
             }

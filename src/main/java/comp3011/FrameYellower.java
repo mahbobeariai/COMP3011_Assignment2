@@ -4,7 +4,7 @@
  * 
  * Authors:
  *   1. Simon Ratcliffe, in collaboration with GPT-5.6 Terra
- *   2. <student name and student number insert here upon modification>
+ *   2. Mahboba Ariai - a2957620
  *
  * Copyright 2026 Simon Ratcliffe
  */
@@ -119,14 +119,18 @@ public class FrameYellower extends FrameProcessor {
         int channels = videoInfo.imageChannels();
         int stride = videoInfo.imageStride();
 
+        byte[] blue = blueLookup;
+        byte[] green = greenLookup;
+        byte[] red = redLookup;
+
         for (int y = 0; y < height; y++) {
-            int rowStart = y * stride;
-            for (int x = 0; x < width; x++) {
-                int base = rowStart + x * channels;
-                // JavaCV supplies these decoded frames in BGR byte order.
-                pixels.put(base, blueLookup[Byte.toUnsignedInt(pixels.get(base))]);
-                pixels.put(base + 1, greenLookup[Byte.toUnsignedInt(pixels.get(base + 1))]);
-                pixels.put(base + 2, redLookup[Byte.toUnsignedInt(pixels.get(base + 2))]);
+            int base = y * stride;
+            int end = base + width * channels;
+
+            for (; base < end; base += channels) {
+                pixels.put(base, blue[pixels.get(base) & 0xFF]);
+                pixels.put(base + 1, green[pixels.get(base + 1) & 0xFF]);
+                pixels.put(base + 2, red[pixels.get(base + 2) & 0xFF]);
             }
         }
     }
